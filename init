@@ -1,0 +1,80 @@
+#!/bin/busybox ash
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs dev /dev
+mkdir -p /dev/pts /run /sysroot
+mount -t devpts devpts /dev/pts
+mount -t tmpfs run /run
+
+root_uuid=
+root_dev=
+root_type=ext4
+root_opts=
+
+for arg in $(cat /proc/cmdline); do
+  case "$arg" in
+    pmos_root_uuid=*|pmos.root_uuid=*) root_uuid=${arg#*=} ;;
+    pmos_rootfsopts=*|pmos.rootfsopts=*) root_opts=${arg#*=} ;;
+    root=*) root_dev=${arg#*=} ;;
+    rootfstype=*) root_type=${arg#*=} ;;
+  esac
+done
+
+case "$root_dev" in
+  UUID=*) root_uuid=${root_dev#UUID=} root_dev= ;;
+  /dev/*) ;;
+  *) root_dev= ;;
+esac
+
+if [ -f /modules.list ]; then
+  while read -r mod; do
+    case "$mod" in
+      ''|\#*) continue ;;
+    esac
+    modprobe "$mod" 2>/dev/null || true
+  done < /modules.list
+fi
+
+if [ -z "$root_dev" ] && [ -n "$root_uuid" ]; then
+  count=0
+  while [ "$count" -lt 30 ]; do
+    for dev in /dev/*; do
+      [ -b "$dev" ] || continue
+      info=$(blkid "$dev" 2>/dev/null) || continue
+      case "$info" in
+        *"UUID=\"$root_uuid\""*) root_dev=$dev; break ;;
+      esac
+    done
+    [ -n "$root_dev" ] && break
+    sleep 1
+    count=$((count + 1))
+  done
+fi
+
+if [ -z "$root_dev" ]; then
+  echo "initramfs: no root device found" >&2
+  exec /bin/busybox ash
+fi
+
+detected=$(blkid -s TYPE -o value "$root_dev" 2>/dev/null) || detected=
+[ -n "$detected" ] && root_type=$detected
+root_opts=${root_opts#,}
+if [ -n "$root_opts" ]; then
+  mount -t "$root_type" -o "rw,$root_opts" "$root_dev" /sysroot
+else
+  mount -t "$root_type" -o rw "$root_dev" /sysroot
+fi
+
+if [ ! -x /sysroot/sbin/init ]; then
+  echo "initramfs: /sbin/init missing" >&2
+  exec /bin/busybox ash
+fi
+
+for hook in /hooks/*; do
+  [ -x "$hook" ] && "$hook"
+done
+
+exec switch_root /sysroot /sbin/init
