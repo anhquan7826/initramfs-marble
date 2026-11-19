@@ -30,7 +30,7 @@ ln -s usr/lib "$STAGE/lib"
 ln -s bin "$STAGE/usr/sbin"
 
 install -m 755 "$SRC/busybox" "$STAGE/usr/bin/busybox"
-for applet in sh ash mount umount blkid sleep mkdir cat modprobe switch_root ln dmesg sync halt reboot poweroff; do
+for applet in sh ash mount umount blkid sleep mkdir cat modprobe switch_root ln dmesg sync halt reboot poweroff ifconfig route telnetd killall pidof; do
   ln -sf busybox "$STAGE/usr/bin/$applet"
 done
 install -m 755 "$SRC/init" "$STAGE/init"
@@ -39,6 +39,11 @@ for hook in "$SRC"/hooks/*; do
   [ -f "$hook" ] || continue
   install -m 755 "$hook" "$STAGE/hooks/$(basename "$hook")"
 done
+
+if [ -d "$SRC/firmware" ]; then
+  mkdir -p "$STAGE/usr/lib/firmware"
+  cp -a "$SRC/firmware"/. "$STAGE/usr/lib/firmware"/
+fi
 
 if [ "$INCLUDE_MODULES" = yes ]; then
   if [ ! -f "$KDIR/.config" ] && [ -f "$KCONFIG" ]; then

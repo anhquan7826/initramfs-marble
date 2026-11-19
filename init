@@ -2,6 +2,8 @@
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 
+echo "[marble-init] start" > /dev/console 2>/dev/null
+
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs dev /dev
@@ -13,6 +15,7 @@ root_uuid=
 root_dev=
 root_type=ext4
 root_opts=
+debug=
 
 for arg in $(cat /proc/cmdline); do
   case "$arg" in
@@ -20,6 +23,7 @@ for arg in $(cat /proc/cmdline); do
     pmos_rootfsopts=*|pmos.rootfsopts=*) root_opts=${arg#*=} ;;
     root=*) root_dev=${arg#*=} ;;
     rootfstype=*) root_type=${arg#*=} ;;
+    marble.debug=*) debug=${arg#*=} ;;
   esac
 done
 
@@ -37,11 +41,16 @@ if [ -f /modules.list ]; then
     modprobe "$mod" 2>/dev/null || true
   done < /modules.list
 fi
+echo "[marble-init] modules loaded" > /dev/console 2>/dev/null
+
+for hook in /hooks/*; do
+  [ -x "$hook" ] && "$hook"
+done
 
 if [ -z "$root_dev" ] && [ -n "$root_uuid" ]; then
   count=0
   while [ "$count" -lt 30 ]; do
-    for dev in /dev/*; do
+    for dev in /dev/sd* /dev/mmcblk*p* /dev/block/sd* /dev/block/mmcblk*p*; do
       [ -b "$dev" ] || continue
       info=$(blkid "$dev" 2>/dev/null) || continue
       case "$info" in
@@ -55,26 +64,33 @@ if [ -z "$root_dev" ] && [ -n "$root_uuid" ]; then
 fi
 
 if [ -z "$root_dev" ]; then
-  echo "initramfs: no root device found" >&2
+  echo "[marble-init] no root device found - dropping to shell" > /dev/console 2>/dev/null
   exec /bin/busybox ash
 fi
 
 detected=$(blkid -s TYPE -o value "$root_dev" 2>/dev/null) || detected=
 [ -n "$detected" ] && root_type=$detected
 root_opts=${root_opts#,}
+echo "[marble-init] root=$root_dev type=$root_type" > /dev/console 2>/dev/null
 if [ -n "$root_opts" ]; then
   mount -t "$root_type" -o "rw,$root_opts" "$root_dev" /sysroot
 else
   mount -t "$root_type" -o rw "$root_dev" /sysroot
 fi
 
-if [ ! -x /sysroot/sbin/init ]; then
-  echo "initramfs: /sbin/init missing" >&2
+INIT=/sbin/init
+for candidate in /sbin/init /usr/sbin/init /lib/systemd/systemd /usr/lib/systemd/systemd; do
+  if [ -x "/sysroot$candidate" ]; then
+    INIT=$candidate
+    break
+  fi
+done
+
+if [ ! -x "/sysroot$INIT" ]; then
+  echo "[marble-init] init binary missing on rootfs - dropping to shell" > /dev/console 2>/dev/null
   exec /bin/busybox ash
 fi
 
-for hook in /hooks/*; do
-  [ -x "$hook" ] && "$hook"
-done
-
-exec switch_root /sysroot /sbin/init
+echo "[marble-init] switching to $INIT" > /dev/console 2>/dev/null
+killall telnetd 2>/dev/null || true
+exec switch_root /sysroot "$INIT"
