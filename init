@@ -19,8 +19,6 @@ debug=
 
 for arg in $(cat /proc/cmdline); do
   case "$arg" in
-    pmos_root_uuid=*|pmos.root_uuid=*) root_uuid=${arg#*=} ;;
-    pmos_rootfsopts=*|pmos.rootfsopts=*) root_opts=${arg#*=} ;;
     root=*) root_dev=${arg#*=} ;;
     rootfstype=*) root_type=${arg#*=} ;;
     marble.debug=*) debug=${arg#*=} ;;
@@ -68,8 +66,14 @@ if [ -z "$root_dev" ]; then
   exec /bin/busybox ash
 fi
 
-detected=$(blkid -s TYPE -o value "$root_dev" 2>/dev/null) || detected=
-[ -n "$detected" ] && root_type=$detected
+info=$(blkid "$root_dev" 2>/dev/null) || info=
+case "$info" in
+  *' TYPE="'*)
+    detected=${info#* TYPE=\"}
+    detected=${detected%%\"*}
+    [ -n "$detected" ] && root_type=$detected
+    ;;
+esac
 root_opts=${root_opts#,}
 echo "[marble-init] root=$root_dev type=$root_type" > /dev/console 2>/dev/null
 if [ -n "$root_opts" ]; then
@@ -91,6 +95,7 @@ if [ ! -x "/sysroot$INIT" ]; then
   exec /bin/busybox ash
 fi
 
-echo "[marble-init] switching to $INIT" > /dev/console 2>/dev/null
+echo "[marble-init] switching to $INIT in 10 seconds" > /dev/console 2>/dev/null
+sleep 10
 killall telnetd 2>/dev/null || true
 exec switch_root /sysroot "$INIT"
